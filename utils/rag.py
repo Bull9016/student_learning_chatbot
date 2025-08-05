@@ -1,9 +1,9 @@
-import os
 import tempfile
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
 from models.embeddings import get_embedding_model
+from langchain.vectorstores import FAISS
+import streamlit as st
 
 DATA_DIR = "data"
 
@@ -33,47 +33,36 @@ def load_and_index_documents():
     return None
 
 def add_uploaded_documents(uploaded_file):
-    """Save uploaded file to disk, load it, embed it, and return a FAISS vectorstore."""
-    from langchain_community.document_loaders import PyPDFLoader, TextLoader
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    from langchain.vectorstores import FAISS
-    from models.embeddings import get_embedding_model
-    import tempfile
-
     docs = []
     try:
-        suffix = ".pdf" if uploaded_file.name.lower().endswith(".pdf") else ".txt"
-
-        # Save uploaded file to a temp path
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+        # Save uploaded file to a temporary location
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{uploaded_file.name}") as tmp_file:
             tmp_file.write(uploaded_file.read())
-            temp_path = tmp_file.name
+            tmp_path = tmp_file.name
 
-        # Load the file into LangChain docs
-        if suffix == ".pdf":
-            loader = PyPDFLoader(temp_path)
+        # Load based on file type
+        if uploaded_file.name.endswith(".pdf"):
+            loader = PyPDFLoader(tmp_path)
+        elif uploaded_file.name.endswith(".txt"):
+            loader = TextLoader(tmp_path)
         else:
-            loader = TextLoader(temp_path)
+            st.warning(f"Unsupported file type: {uploaded_file.name}")
+            return
 
-        loaded_docs = loader.load()
-        if not loaded_docs:
-            print(f"No text found in {uploaded_file.name}")
-            return None
+        docs.extend(loader.load())
 
-        docs.extend(loaded_docs)
+        if docs:
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+            chunks = splitter.split_documents(docs)
+            embeddings = get_embedding_model()
+
+            if st.session_state.vectorstore:
+                st.session_state.vectorstore.add_documents(chunks)
+            else:
+                st.session_state.vectorstore = FAISS.from_documents(chunks, embeddings)
 
     except Exception as e:
-        print(f"Error loading {uploaded_file.name}: {e}")
-        return None
-
-    if docs:
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_documents(docs)
-        embeddings = get_embedding_model()
-        return FAISS.from_documents(chunks, embeddings)
-
-    return None
-
+        st.error(f"Error loading file {uploaded_file.name}: {e}")
 
 def query_vectorstore(vectorstore, query, k=3, score_threshold=0.75):
     """Search with score filtering."""
