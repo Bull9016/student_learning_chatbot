@@ -4,13 +4,15 @@ from models.llm import get_gemini_model
 from utils.rag import load_and_index_documents, query_vectorstore, add_uploaded_documents
 from utils.web_search import google_search
 
-# Load main vectorstore at startup
+# Initialize session state
 if "vectorstore" not in st.session_state:
     st.session_state.vectorstore = load_and_index_documents()
 
-# Separate vectorstore for uploaded docs
 if "uploaded_vectorstore" not in st.session_state:
     st.session_state.uploaded_vectorstore = None
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 def get_chat_response(chat_model, messages, system_prompt):
     """Get response from the chat model."""
@@ -62,10 +64,7 @@ def chat_page():
         "Choose your interest for examples:",
         ["General", "Cricket", "F1", "Cooking", "Other"]
     )
-    if interest_choice == "Other":
-        interest = st.text_input("Enter your custom interest:")
-    else:
-        interest = interest_choice
+    interest = st.text_input("Enter your custom interest:") if interest_choice == "Other" else interest_choice
 
     # File uploader
     uploaded_files = st.file_uploader(
@@ -81,15 +80,12 @@ def chat_page():
                     st.session_state.uploaded_vectorstore.merge_from(new_store)
                 else:
                     st.session_state.uploaded_vectorstore = new_store
-        st.success("✅ Documents added to knowledge base!")
+        st.success("✅ Documents added to knowledge base! You can now ask questions about them.")
 
     # System prompt
     system_prompt = f"You are a friendly learning assistant. Provide {mode.lower()} answers with examples related to {interest}."
 
     chat_model = get_gemini_model()
-
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
 
     # Display history
     for message in st.session_state.messages:
@@ -104,16 +100,13 @@ def chat_page():
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                # Search uploaded docs first
                 local_results = []
                 if st.session_state.uploaded_vectorstore:
-                    local_results = query_vectorstore(st.session_state.uploaded_vectorstore, prompt, score_threshold=0.75)
+                    local_results = query_vectorstore(st.session_state.uploaded_vectorstore, prompt, k=3)
 
-                # If none, search default docs
-                if not local_results:
-                    local_results = query_vectorstore(st.session_state.vectorstore, prompt, score_threshold=0.75)
+                if not local_results and st.session_state.vectorstore:
+                    local_results = query_vectorstore(st.session_state.vectorstore, prompt, k=3)
 
-                # If still none, use web search
                 if local_results:
                     context = "\n".join([doc.page_content for doc in local_results])
                     full_prompt = f"{prompt}\n\nContext:\n{context}"
@@ -135,6 +128,7 @@ def main():
             st.divider()
             if st.button("🗑️ Clear Chat History", use_container_width=True):
                 st.session_state.messages = []
+                st.session_state.uploaded_vectorstore = None
                 st.rerun()
     if page == "Instructions":
         instructions_page()
